@@ -78,6 +78,41 @@ function buildEmptyFields(): import("@/lib/types").ExtractedFields {
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const isMockMode = !ANTHROPIC_API_KEY;
 
+// ─── DOM polyfills required by pdfjs-dist in Node.js serverless ───────────────
+// pdfjs-dist v5 tries to polyfill browser APIs at module init time.
+// These stubs satisfy the initializer; they are never called during text extraction.
+(function installPdfPolyfills() {
+  const g = globalThis as Record<string, unknown>;
+  if (!g.DOMMatrix) {
+    class DOMMatrix {
+      constructor(_init?: string | number[]) {}
+      static fromFloat32Array() { return new DOMMatrix(); }
+      static fromFloat64Array() { return new DOMMatrix(); }
+      static fromMatrix() { return new DOMMatrix(); }
+    }
+    g.DOMMatrix = DOMMatrix;
+  }
+  if (!g.Path2D) {
+    class Path2D {
+      constructor(_path?: string) {}
+      addPath() {} closePath() {} moveTo() {} lineTo() {}
+      bezierCurveTo() {} quadraticCurveTo() {} arc() {} arcTo() {}
+      ellipse() {} rect() {}
+    }
+    g.Path2D = Path2D;
+  }
+  if (!g.ImageData) {
+    class ImageData {
+      data: Uint8ClampedArray; width: number; height: number; colorSpace = "srgb";
+      constructor(width: number, height: number) {
+        this.width = width; this.height = height;
+        this.data = new Uint8ClampedArray(width * height * 4);
+      }
+    }
+    g.ImageData = ImageData;
+  }
+})();
+
 // ─── PDF text extraction ──────────────────────────────────────────────────────
 
 async function extractPdfText(buffer: Buffer): Promise<{ text: string; pageCount: number }> {
@@ -251,35 +286,80 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
 
     // ── PDF handling ──────────────────────────────────────────────────────────
     if (isPdf) {
-      const pdfResult = await extractPdfText(buffer);
-      pageCount = pdfResult.pageCount;
+      // Try local text extraction first; fall back to Claude Vision on any failure
+      let pdfResult: { text: string; pageCount: number } = { text: "", pageCount: 1 };
+      let localExtractionFailed = false;
+
+      try {
+        pdfResult = await extractPdfText(buffer);
+        pageCount = pdfResult.pageCount;
+        log.info("pdf local extraction attempted", {
+          requestId, documentId,
+          chars: pdfResult.text.length,
+          pageCount: pdfResult.pageCount,
+        });
+      } catch (pdfErr) {
+        localExtractionFailed = true;
+        const pdfErrMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
+        log.warn("pdf local extraction failed, falling back to claude vision", {
+          requestId, documentId, err: pdfErrMsg,
+        });
+      }
+
       // A real text-layer PDF typically has >50 chars per page of actual content
-      const hasTextLayer = pdfResult.text.length > Math.max(50, pdfResult.pageCount * 30);
+      const hasTextLayer =
+        !localExtractionFailed &&
+        pdfResult.text.length > Math.max(50, (pdfResult.pageCount ?? 1) * 30);
 
       if (hasTextLayer) {
-        // Native PDF with text layer
+        // ── Native text-layer PDF ──────────────────────────────────────────────
         extractedText = pdfResult.text;
         extractionMethod = "pdf_text";
-        log.info("pdf text layer extracted", { requestId, documentId, chars: extractedText.length, pageCount });
+        log.info("pdf text layer confirmed", {
+          requestId, documentId, chars: extractedText.length, pageCount,
+        });
 
         if (!isMockMode) {
-          // Use Claude to extract structured fields from text
           metadata = await claudeTextExtract(extractedText);
-          log.info("claude text extraction complete", { requestId, documentId });
+          log.info("claude text field extraction complete", { requestId, documentId });
+        } else {
+          log.warn("mock mode: skipping claude field extraction", { requestId, documentId });
         }
       } else {
-        // Scanned PDF — no text layer, use Claude Vision
+        // ── Scanned PDF or extraction failure — use Claude Vision ──────────────
         extractionMethod = "claude_vision_pdf";
-        log.info("scanned pdf detected, using vision", { requestId, documentId, pageCount });
+        const reason = localExtractionFailed
+          ? "local extraction failed"
+          : `no text layer (${pdfResult.text.length} chars for ${pdfResult.pageCount} pages)`;
+        log.info("routing pdf to claude vision", { requestId, documentId, reason });
 
         if (!isMockMode) {
-          const visionResult = await claudeVisionExtract(buffer, "application/pdf");
-          extractedText = visionResult.rawText;
-          metadata = visionResult.extracted;
-          log.info("claude vision pdf extraction complete", { requestId, documentId, chars: extractedText.length });
+          try {
+            const visionResult = await claudeVisionExtract(buffer, "application/pdf");
+            extractedText = visionResult.rawText;
+            metadata = visionResult.extracted;
+            log.info("claude vision pdf complete", {
+              requestId, documentId, chars: extractedText.length,
+            });
+
+            if (!extractedText || extractedText.trim().length < 20) {
+              extractedText =
+                "[PDF uploaded but no readable text was found. " +
+                "This appears to be a scanned PDF. Try the camera feature or upload as an image.]";
+              log.warn("claude vision returned empty text", { requestId, documentId });
+            }
+          } catch (visionErr) {
+            const visionErrMsg = visionErr instanceof Error ? visionErr.message : String(visionErr);
+            log.error("claude vision pdf failed", { requestId, documentId, err: visionErrMsg });
+            extractedText =
+              "[PDF extraction failed. Try uploading as a high-resolution image " +
+              "or use the camera feature to capture the document.]";
+            metadata = buildEmptyFields();
+          }
         } else {
-          // Mock mode fallback: use empty text
-          extractedText = pdfResult.text || "[Scanned PDF — requires ANTHROPIC_API_KEY for text extraction]";
+          extractedText =
+            "[Scanned PDF detected. Add ANTHROPIC_API_KEY to enable AI text extraction via Claude Vision.]";
+          log.warn("mock mode: scanned pdf requires api key", { requestId, documentId });
         }
       }
     }
