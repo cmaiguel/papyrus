@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["pdf-parse", "tesseract.js"],
+  // These packages use native Node.js modules or WASM — must not be bundled
+  serverExternalPackages: ["pdf-parse", "pdfjs-dist", "@napi-rs/canvas", "tesseract.js"],
 
   experimental: {
     serverActions: {
