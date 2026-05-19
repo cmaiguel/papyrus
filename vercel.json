@@ -1,0 +1,11 @@
+{
+  "framework": "nextjs",
+  "functions": {
+    "app/api/documents/upload/route.ts": { "maxDuration": 120 },
+    "app/api/chat/route.ts":             { "maxDuration": 120 },
+    "app/api/vision/analyze/route.ts":   { "maxDuration": 120 },
+    "app/api/artifacts/generate/route.ts": { "maxDuration": 60 }
+  },
+  "buildCommand": "npm run build",
+  "installCommand": "npm install"
+}
