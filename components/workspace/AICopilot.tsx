@@ -383,9 +383,9 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
         try { primeTTS(); } catch (_) { /* non-fatal */ }
 
         const rec = new Ctor();
-        rec.lang           = LOCALE_BCP47[locale];
-        rec.continuous     = false;
-        rec.interimResults = true;
+        rec.lang            = LOCALE_BCP47[locale];
+        rec.continuous      = true;  // ← KEY FIX: keeps session alive through pauses
+        rec.interimResults  = true;  //   so "no-speech" timeouts never fire
         rec.maxAlternatives = 1;
 
         rec.onstart = () => {
@@ -402,25 +402,26 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
             if (e.results[i].isFinal) final += tx;
             else interim += tx;
           }
+          // Show interim in the waveform banner; accumulate finals silently
           if (interim) setInterimText(interim);
           if (final) {
             pendingVoiceText.current = (pendingVoiceText.current + " " + final).trim();
-            setInput(pendingVoiceText.current);
-            setInterimText("");
+            setInterimText(""); // clear interim once a final segment lands
           }
         };
 
         rec.onerror = (e: Event & { error?: string }) => {
           const code = (e as { error?: string }).error ?? "unknown";
           console.error("[mic] onerror:", code);
+          // "no-speech" with continuous=true is a brief silence, not a fatal error.
+          // Just log it — the session keeps going automatically.
+          if (code === "no-speech" || code === "aborted") return;
           stream.getTracks().forEach((t) => t.stop());
           const msgs: Record<string, string> = {
             "not-allowed":         "Microphone blocked. Click the 🔒 in the address bar → Site settings → Microphone → Allow → refresh.",
-            "no-speech":           "No speech detected — speak louder or closer to the mic.",
             "network":             "Network error during voice recognition.",
             "audio-capture":       "No microphone found. Plug one in and try again.",
-            "aborted":             "",
-            "service-not-allowed": "Voice service blocked. Ensure the site has microphone permission and you are on HTTPS.",
+            "service-not-allowed": "Voice blocked — ensure HTTPS and microphone permission are set.",
           };
           const msg = msgs[code] ?? `Voice error (${code}).`;
           if (msg) setMicError(msg);
@@ -429,7 +430,9 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
         };
 
         rec.onend = () => {
-          stream.getTracks().forEach((t) => t.stop()); // safety cleanup
+          // With continuous=true, onend fires only when rec.stop() is called
+          // (by stopListening) or on a fatal error. Auto-send what was captured.
+          stream.getTracks().forEach((t) => t.stop());
           setIsListening(false);
           setInterimText("");
           recognitionRef.current = null;
@@ -437,8 +440,7 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
           const captured = pendingVoiceText.current.trim();
           pendingVoiceText.current = "";
           if (captured) {
-            // Auto-send — AI will speak the reply back (fromVoice=true)
-            sendMessageRef.current(captured, true);
+            sendMessageRef.current(captured, true); // fromVoice=true → AI speaks back
           }
         };
 
