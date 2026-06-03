@@ -74,9 +74,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
              : "webm";
 
   // ── Build Whisper request ──────────────────────────────────────────────────
+  // Use the model set via OPENAI_TRANSCRIPTION_MODEL, defaulting to
+  // gpt-4o-mini-transcribe (lower cost, faster). Falls back to whisper-1 on
+  // error so the endpoint still works on accounts that don't have the newer model.
+  const model = process.env.OPENAI_TRANSCRIPTION_MODEL ?? "gpt-4o-mini-transcribe";
+
   const whisperForm = new FormData();
   whisperForm.append("file", audio, `audio.${ext}`);
-  whisperForm.append("model", "whisper-1");
+  whisperForm.append("model", model);
   whisperForm.append("response_format", "json");
 
   // BCP-47 "en-US" → ISO 639-1 "en" (Whisper only accepts 2-letter codes)
@@ -108,7 +113,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   if (!whisperResp.ok) {
     const body = await whisperResp.text().catch(() => "");
-    log.error("whisper API error", { status: whisperResp.status, body });
+    log.error("whisper API error", { model, status: whisperResp.status, body });
+
+    // If the newer model was rejected (404 / 400) try whisper-1 as a fallback
+    if (model !== "whisper-1" && (whisperResp.status === 404 || whisperResp.status === 400)) {
+      log.warn("falling back to whisper-1", { originalModel: model });
+      const fallbackForm = new FormData();
+      fallbackForm.append("file", audio, `audio.${ext}`);
+      fallbackForm.append("model", "whisper-1");
+      fallbackForm.append("response_format", "json");
+      if (lang && lang.length === 2 && lang !== "au") fallbackForm.append("language", lang);
+
+      const fallback = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+        method:  "POST",
+        headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+        body:    fallbackForm,
+      }).catch(() => null);
+
+      if (fallback?.ok) {
+        const fd = (await fallback.json()) as { text?: string };
+        return NextResponse.json({ transcript: (fd.text ?? "").trim() });
+      }
+    }
+
     return NextResponse.json(
       { error: `Transcription service error (${whisperResp.status}).` },
       { status: 502 }

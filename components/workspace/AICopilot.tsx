@@ -521,10 +521,12 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
 
             const res = await fetch("/api/transcribe", { method: "POST", body: fd });
 
-            // 503 = OPENAI_API_KEY not set → gracefully fall back to Web Speech API
+            // 503 = OPENAI_API_KEY not configured → inform user and fall back to Web Speech API
             if (res.status === 503) {
               setMicState("idle");
               setInterimText("");
+              setMicError("Transcription is not configured. Add OPENAI_API_KEY to Vercel and redeploy. Falling back to browser voice…");
+              setTimeout(() => setMicError(null), 5_000);
               startWebSpeech();
               return;
             }
@@ -538,24 +540,43 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
             if (data.error) throw new Error(data.error);
 
             const transcript = (data.transcript ?? "").trim();
-            setMicState("idle");
             setInterimText("");
 
-            if (!transcript) return;
+            // Empty transcript = no speech detected
+            if (!transcript) {
+              setMicState("error");
+              setMicError("I couldn't detect any speech. Please try speaking again.");
+              return;
+            }
+
+            setMicState("idle");
 
             if (hasDocumentRef.current) {
               // Auto-send; AI will speak the reply back (fromVoice=true)
               sendMessageRef.current(transcript, true);
             } else {
-              // No document loaded — put in input box so user can see it
-              // without auto-sending (sendMessage guards on hasDocument)
+              // No document loaded — put transcript in the input box and show
+              // a friendly hint so the user knows what to do next
               setInput(transcript);
               wasVoiceInput.current = true;
+              setMicError("Got it! Upload a document first so I can answer in context.");
+              // Treat as info, not hard error — clear automatically after 4 s
+              setTimeout(() => setMicError(null), 4_000);
             }
           } catch (err) {
             setMicState("error");
             setInterimText("");
-            setMicError(err instanceof Error ? err.message : "Transcription failed. Please try again.");
+            // Distinguish network failures from API/server errors
+            const isNetworkErr =
+              err instanceof TypeError &&
+              /fetch|network|failed to fetch/i.test((err as TypeError).message);
+            setMicError(
+              isNetworkErr
+                ? "Transcription failed due to a network error. Check your connection and try again."
+                : err instanceof Error
+                  ? err.message
+                  : "Transcription failed. Please try again."
+            );
           }
         };
 
@@ -573,7 +594,9 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
         setMicState("recording");
       })
       .catch((err: Error) => {
-        console.error("[mic] getUserMedia failed:", err.name, err.message);
+        if (process.env.NODE_ENV !== "production") {
+          console.error("[mic] getUserMedia failed:", err.name, err.message);
+        }
         setMicState("error");
         if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
           setMicError("Microphone blocked. Click the 🔒 icon in the address bar → Site settings → Microphone → Allow → refresh.");
