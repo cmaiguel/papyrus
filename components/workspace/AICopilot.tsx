@@ -13,6 +13,7 @@ import {
   Volume2,
   Square,
   Camera,
+  Loader2,
 } from "lucide-react";
 import type { PapyrusDocument, ChatMessage, ArtifactType } from "@/lib/types";
 import { appendChatMessage } from "@/lib/document-store";
@@ -120,31 +121,47 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
   const [input, setInput]               = useState("");
   const [error, setError]               = useState<string | null>(null);
 
-  // Voice state
-  const [isListening, setIsListening]         = useState(false);
-  const [isSpeaking, setIsSpeaking]           = useState(false);
-  const [interimText, setInterimText]         = useState("");
-  const [sttSupported, setSttSupported]       = useState(false);
-  const [speakingMsgIdx, setSpeakingMsgIdx]   = useState<number | null>(null);
-  const [micError, setMicError]               = useState<string | null>(null);
+  // ── Voice state machine ───────────────────────────────────────────────────
+  // idle → requesting → recording → transcribing → idle
+  //                  ↘ error (any stage)
+  type MicState = "idle" | "requesting" | "recording" | "transcribing" | "error";
+  const [micState,    setMicState]    = useState<MicState>("idle");
+  const [micError,    setMicError]    = useState<string | null>(null);
+  const [interimText, setInterimText] = useState("");      // interim shown in banner
+  const [micAvailable, setMicAvailable] = useState(false); // set on mount
+
+  // TTS state
+  const [isSpeaking,     setIsSpeaking]     = useState(false);
+  const [speakingMsgIdx, setSpeakingMsgIdx] = useState<number | null>(null);
 
   // Camera state
-  const [showCamera, setShowCamera]           = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
 
-  // Refs
-  const messagesEndRef    = useRef<HTMLDivElement>(null);
-  const abortRef          = useRef<AbortController | null>(null);
-  const recognitionRef    = useRef<SpeechRecognitionInstance | null>(null);
-  const wasVoiceInput     = useRef(false);
-  const keepAliveRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Pending voice transcript — accumulated during recognition, auto-sent on end
-  const pendingVoiceText  = useRef("");
-  // Stable ref so STT onend can always call the latest sendMessage without stale closure
-  const sendMessageRef    = useRef<(text: string, fromVoice?: boolean) => void>(() => {});
+  // ── Refs ──────────────────────────────────────────────────────────────────
+  const messagesEndRef   = useRef<HTMLDivElement>(null);
+  const abortRef         = useRef<AbortController | null>(null);
+  // MediaRecorder path
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef   = useRef<BlobPart[]>([]);
+  const mediaStreamRef   = useRef<MediaStream | null>(null);
+  // Web Speech fallback
+  const recognitionRef   = useRef<SpeechRecognitionInstance | null>(null);
+  const pendingVoiceText = useRef("");
+  // Shared
+  const wasVoiceInput    = useRef(false);
+  const hasDocumentRef   = useRef(false);          // kept in sync below
+  const keepAliveRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Stable sendMessage ref — prevents stale closures in async audio handlers
+  const sendMessageRef   = useRef<(text: string, fromVoice?: boolean) => void>(() => {});
 
+  // Check what's available on mount (client-side only)
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSttSupported(getSpeechRecognition() !== null);
+    setMicAvailable(
+      typeof window !== "undefined" && (
+        typeof window.MediaRecorder !== "undefined" ||
+        getSpeechRecognition() !== null
+      )
+    );
   }, []);
 
   useEffect(() => {
@@ -158,6 +175,8 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
   }, [messages, streamingText]);
 
   const hasDocument = document !== null && document.status === "ready";
+  // Keep hasDocumentRef in sync so async handlers (MediaRecorder.onstop) see current value
+  useEffect(() => { hasDocumentRef.current = hasDocument; }, [hasDocument]);
 
   // ── TTS ───────────────────────────────────────────────────────────────────
 
@@ -358,123 +377,261 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
     [messages, document, onChatUpdated]
   );
 
-  // ── STT ───────────────────────────────────────────────────────────────────
+  // ── Voice: Web Speech API fallback ───────────────────────────────────────
+  // Used when /api/transcribe returns 503 (no OPENAI_API_KEY) or MediaRecorder
+  // is unavailable. continuous=true avoids the no-speech timeout issue.
 
-  const startListening = useCallback(() => {
+  const startWebSpeech = useCallback(() => {
     const Ctor = getSpeechRecognition();
     if (!Ctor) {
-      setMicError("Voice input requires Chrome or Edge.");
+      setMicState("error");
+      setMicError("Voice not supported in this browser. Use Chrome or Edge, or add OPENAI_API_KEY to the server.");
       return;
     }
-    setMicError(null);
     pendingVoiceText.current = "";
 
-    // ── Permission-first approach ──────────────────────────────────────────
-    // getUserMedia is called synchronously inside the click handler (user
-    // gesture) so Chrome shows its proper permission dialog.
-    // The stream stays ALIVE until rec.onstart fires — stopping it too early
-    // causes a brief mic-release gap that makes rec.start() fail with
-    // "not-allowed" on some browsers even after permission is granted.
+    const rec = new Ctor();
+    rec.lang            = LOCALE_BCP47[locale];
+    rec.continuous      = true;   // keeps session alive through pauses → no no-speech timeout
+    rec.interimResults  = true;
+    rec.maxAlternatives = 1;
+
+    rec.onstart = () => { setMicState("recording"); wasVoiceInput.current = true; };
+
+    rec.onresult = (e: SpeechRecognitionEvent) => {
+      let interim = "", final = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const tx = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += tx;
+        else interim += tx;
+      }
+      if (interim) setInterimText(interim);
+      if (final) {
+        pendingVoiceText.current = (pendingVoiceText.current + " " + final).trim();
+        setInterimText("");
+      }
+    };
+
+    rec.onerror = (e: Event & { error?: string }) => {
+      const code = (e as { error?: string }).error ?? "unknown";
+      if (code === "no-speech" || code === "aborted") return; // non-fatal with continuous=true
+      const errMsgs: Record<string, string> = {
+        "not-allowed":         "Microphone blocked. Click the 🔒 in the address bar → Site settings → Microphone → Allow → refresh.",
+        "audio-capture":       "No microphone found. Plug one in and try again.",
+        "network":             "Network error during voice recognition.",
+        "service-not-allowed": "Voice service blocked — ensure HTTPS and microphone permission.",
+      };
+      setMicState("error");
+      setMicError(errMsgs[code] ?? `Voice error (${code}).`);
+    };
+
+    rec.onend = () => {
+      setMicState("idle");
+      setInterimText("");
+      recognitionRef.current = null;
+      const captured = pendingVoiceText.current.trim();
+      pendingVoiceText.current = "";
+      if (!captured) return;
+      if (hasDocumentRef.current) {
+        sendMessageRef.current(captured, true);
+      } else {
+        setInput(captured);
+        wasVoiceInput.current = true;
+      }
+    };
+
+    recognitionRef.current = rec;
+    try {
+      rec.start();
+    } catch (err) {
+      setMicState("error");
+      setMicError(`Could not start microphone: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [locale]);
+
+  const stopWebSpeech = useCallback(() => {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    setMicState("idle");
+    setInterimText("");
+    pendingVoiceText.current = "";
+  }, []);
+
+  // ── Voice: MediaRecorder primary path ─────────────────────────────────────
+  // 1. getUserMedia  → show browser permission dialog (proper UI, not silent)
+  // 2. MediaRecorder → capture audio to chunks
+  // 3. POST /api/transcribe → Whisper returns transcript
+  // 4. Auto-send if document loaded, otherwise put in input box
+
+  const startRecording = useCallback(() => {
+    setMicState("requesting");
+    setMicError(null);
+    setInterimText("");
+
+    // Prime TTS inside this user-gesture so Chrome allows async speak() later
+    try { primeTTS(); } catch (_) { /* non-fatal */ }
+
     navigator.mediaDevices
       .getUserMedia({ audio: true })
       .then((stream) => {
-        // Permission granted. Prime TTS now (still in a microtask of the
-        // click gesture chain, so Chrome allows async speak() later).
-        try { primeTTS(); } catch (_) { /* non-fatal */ }
+        mediaStreamRef.current = stream;
+        audioChunksRef.current = [];
 
-        const rec = new Ctor();
-        rec.lang            = LOCALE_BCP47[locale];
-        rec.continuous      = true;  // ← KEY FIX: keeps session alive through pauses
-        rec.interimResults  = true;  //   so "no-speech" timeouts never fire
-        rec.maxAlternatives = 1;
+        // Pick the best MIME type this browser supports
+        const mimeType = (
+          ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus", "audio/ogg"]
+            .find((t) => MediaRecorder.isTypeSupported(t))
+        ) ?? "";
 
-        rec.onstart = () => {
-          // Release the getUserMedia stream now that STT has the mic
-          stream.getTracks().forEach((t) => t.stop());
-          setIsListening(true);
-          wasVoiceInput.current = true;
-        };
-
-        rec.onresult = (e: SpeechRecognitionEvent) => {
-          let interim = "", final = "";
-          for (let i = e.resultIndex; i < e.results.length; i++) {
-            const tx = e.results[i][0].transcript;
-            if (e.results[i].isFinal) final += tx;
-            else interim += tx;
-          }
-          // Show interim in the waveform banner; accumulate finals silently
-          if (interim) setInterimText(interim);
-          if (final) {
-            pendingVoiceText.current = (pendingVoiceText.current + " " + final).trim();
-            setInterimText(""); // clear interim once a final segment lands
-          }
-        };
-
-        rec.onerror = (e: Event & { error?: string }) => {
-          const code = (e as { error?: string }).error ?? "unknown";
-          console.error("[mic] onerror:", code);
-          // "no-speech" with continuous=true is a brief silence, not a fatal error.
-          // Just log it — the session keeps going automatically.
-          if (code === "no-speech" || code === "aborted") return;
-          stream.getTracks().forEach((t) => t.stop());
-          const msgs: Record<string, string> = {
-            "not-allowed":         "Microphone blocked. Click the 🔒 in the address bar → Site settings → Microphone → Allow → refresh.",
-            "network":             "Network error during voice recognition.",
-            "audio-capture":       "No microphone found. Plug one in and try again.",
-            "service-not-allowed": "Voice blocked — ensure HTTPS and microphone permission are set.",
-          };
-          const msg = msgs[code] ?? `Voice error (${code}).`;
-          if (msg) setMicError(msg);
-          setIsListening(false);
-          setInterimText("");
-        };
-
-        rec.onend = () => {
-          // With continuous=true, onend fires only when rec.stop() is called
-          // (by stopListening) or on a fatal error. Auto-send what was captured.
-          stream.getTracks().forEach((t) => t.stop());
-          setIsListening(false);
-          setInterimText("");
-          recognitionRef.current = null;
-
-          const captured = pendingVoiceText.current.trim();
-          pendingVoiceText.current = "";
-          if (captured) {
-            sendMessageRef.current(captured, true); // fromVoice=true → AI speaks back
-          }
-        };
-
-        recognitionRef.current = rec;
+        let recorder: MediaRecorder;
         try {
-          rec.start();
-        } catch (err) {
-          stream.getTracks().forEach((t) => t.stop());
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error("[mic] rec.start() threw:", msg);
-          setIsListening(false);
-          setMicError(`Could not start microphone: ${msg}`);
+          recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        } catch {
+          // Fallback: let browser pick its default
+          recorder = new MediaRecorder(stream);
         }
+
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        };
+
+        recorder.onstop = async () => {
+          stream.getTracks().forEach((t) => t.stop());
+          mediaStreamRef.current = null;
+          mediaRecorderRef.current = null;
+
+          const blob = new Blob(audioChunksRef.current, {
+            type: recorder.mimeType || "audio/webm",
+          });
+          audioChunksRef.current = [];
+
+          // Too short to contain speech (< 0.5 s at 128 kbps ≈ 8 KB)
+          if (blob.size < 4_000) {
+            setMicState("idle");
+            return;
+          }
+
+          setMicState("transcribing");
+          setInterimText("Transcribing…");
+
+          try {
+            const fd = new FormData();
+            fd.append("audio", blob, "recording");
+            fd.append("language", LOCALE_BCP47[locale]);
+
+            const res = await fetch("/api/transcribe", { method: "POST", body: fd });
+
+            // 503 = OPENAI_API_KEY not set → gracefully fall back to Web Speech API
+            if (res.status === 503) {
+              setMicState("idle");
+              setInterimText("");
+              startWebSpeech();
+              return;
+            }
+
+            if (!res.ok) {
+              const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string };
+              throw new Error(body.error ?? `Transcription failed (${res.status})`);
+            }
+
+            const data = await res.json() as { transcript?: string; error?: string };
+            if (data.error) throw new Error(data.error);
+
+            const transcript = (data.transcript ?? "").trim();
+            setMicState("idle");
+            setInterimText("");
+
+            if (!transcript) return;
+
+            if (hasDocumentRef.current) {
+              // Auto-send; AI will speak the reply back (fromVoice=true)
+              sendMessageRef.current(transcript, true);
+            } else {
+              // No document loaded — put in input box so user can see it
+              // without auto-sending (sendMessage guards on hasDocument)
+              setInput(transcript);
+              wasVoiceInput.current = true;
+            }
+          } catch (err) {
+            setMicState("error");
+            setInterimText("");
+            setMicError(err instanceof Error ? err.message : "Transcription failed. Please try again.");
+          }
+        };
+
+        recorder.onerror = () => {
+          stream.getTracks().forEach((t) => t.stop());
+          mediaStreamRef.current  = null;
+          mediaRecorderRef.current = null;
+          setMicState("error");
+          setMicError("Recording failed. Please try again.");
+        };
+
+        // Collect a chunk every 250 ms so onstop has all data
+        recorder.start(250);
+        mediaRecorderRef.current = recorder;
+        setMicState("recording");
       })
       .catch((err: Error) => {
         console.error("[mic] getUserMedia failed:", err.name, err.message);
+        setMicState("error");
         if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-          setMicError("Microphone blocked. Click the 🔒 in the address bar → Site settings → Microphone → Allow → refresh.");
+          setMicError("Microphone blocked. Click the 🔒 icon in the address bar → Site settings → Microphone → Allow → refresh.");
         } else if (err.name === "NotFoundError") {
           setMicError("No microphone found. Plug one in and try again.");
+        } else if (err.name === "NotSupportedError") {
+          setMicError("Voice input is not supported in this browser.");
         } else {
           setMicError(`Microphone error: ${err.message}`);
         }
       });
-  }, [locale, primeTTS]);
+  }, [locale, primeTTS, startWebSpeech]);
 
-  const stopListening = useCallback(() => {
-    recognitionRef.current?.stop();
-    recognitionRef.current = null;
-    setIsListening(false);
-    setInterimText("");
-    pendingVoiceText.current = "";
-    wasVoiceInput.current = false;
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop(); // triggers onstop → transcription
+    } else {
+      // Stuck in requesting/error — clean up
+      mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current   = null;
+      mediaRecorderRef.current = null;
+      setMicState("idle");
+      setInterimText("");
+    }
   }, []);
+
+  // ── Unified mic click handler ──────────────────────────────────────────────
+
+  const handleMicClick = useCallback(() => {
+    if (micState === "recording") {
+      // Stop whichever mode is active
+      if (mediaRecorderRef.current) stopRecording();
+      else stopWebSpeech();
+      return;
+    }
+    if (micState === "idle" || micState === "error") {
+      setMicError(null);
+      if (typeof window !== "undefined" && typeof window.MediaRecorder !== "undefined") {
+        startRecording();
+      } else {
+        // MediaRecorder unavailable — go straight to Web Speech API
+        setMicState("requesting");
+        navigator.mediaDevices
+          .getUserMedia({ audio: true })
+          .then((stream) => { stream.getTracks().forEach((t) => t.stop()); startWebSpeech(); })
+          .catch((err: Error) => {
+            setMicState("error");
+            if (err.name === "NotAllowedError") {
+              setMicError("Microphone blocked. Click the 🔒 in the address bar → Site settings → Microphone → Allow → refresh.");
+            } else if (err.name === "NotFoundError") {
+              setMicError("No microphone found. Plug one in and try again.");
+            } else {
+              setMicError(`Microphone error: ${err.message}`);
+            }
+          });
+      }
+    }
+  }, [micState, startRecording, stopRecording, startWebSpeech, stopWebSpeech]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -622,39 +779,60 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
       {/* Input */}
       <div className="px-3 pb-4 pt-3 border-t border-white/8 shrink-0">
 
-        {/* Mic error */}
-        {micError && (
-          <div className="mb-2 flex items-center justify-between px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20">
-            <span className="text-[11px] text-red-300">{micError}</span>
-            <button onClick={() => setMicError(null)} className="text-red-400 hover:text-red-300 text-xs ml-2">✕</button>
+        {/* ── Mic error banner ──────────────────────────────────────────── */}
+        {micState === "error" && micError && (
+          <div className="mb-2 flex items-start justify-between gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
+            <span className="text-[11px] text-red-300 leading-relaxed">{micError}</span>
+            <button onClick={() => { setMicState("idle"); setMicError(null); }}
+              className="text-red-400 hover:text-red-300 text-xs shrink-0 mt-0.5">✕</button>
           </div>
         )}
 
-        {/* Listening banner — replaces input box while mic is active */}
-        {isListening && (
-          <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 rounded-xl px-3 py-2.5 mb-2">
-            <div className="flex items-center gap-0.5 shrink-0">
-              {[0, 120, 240, 120, 0].map((delay, k) => (
-                <span key={k} className="w-0.5 bg-red-400 rounded-full animate-bounce"
-                  style={{ height: `${6 + k * 2}px`, animationDelay: `${delay}ms` }} />
-              ))}
-            </div>
-            <span className="text-[11px] text-red-300 flex-1 truncate">
-              {interimText || tr.listeningNow}
+        {/* ── Recording / transcribing banner (replaces input while active) ── */}
+        {(micState === "recording" || micState === "transcribing") && (
+          <div className={`flex items-center gap-3 rounded-xl px-3 py-2.5 mb-2 border ${
+            micState === "transcribing"
+              ? "bg-[#F5C800]/8 border-[#F5C800]/20"
+              : "bg-red-500/10 border-red-500/30"
+          }`}>
+            {micState === "recording" ? (
+              // Animated waveform while recording
+              <div className="flex items-center gap-0.5 shrink-0">
+                {[0, 120, 240, 120, 0].map((delay, k) => (
+                  <span key={k} className="w-0.5 bg-red-400 rounded-full animate-bounce"
+                    style={{ height: `${6 + k * 2}px`, animationDelay: `${delay}ms` }} />
+                ))}
+              </div>
+            ) : (
+              // Spinner while transcribing
+              <Loader2 className="w-3.5 h-3.5 text-[#F5C800] animate-spin shrink-0" />
+            )}
+
+            <span className={`text-[11px] flex-1 truncate ${
+              micState === "transcribing" ? "text-[#F5C800]/80" : "text-red-300"
+            }`}>
+              {micState === "transcribing"
+                ? (interimText || "Transcribing…")
+                : (interimText || tr.listeningNow)}
             </span>
-            <button
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={stopListening}
-              className="text-[10px] text-red-400 hover:text-red-300 shrink-0 font-medium"
-            >
-              {tr.stop}
-            </button>
+
+            {micState === "recording" && (
+              <button
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => mediaRecorderRef.current ? stopRecording() : stopWebSpeech()}
+                className="text-[10px] text-red-400 hover:text-red-300 shrink-0 font-medium"
+              >
+                {tr.stop}
+              </button>
+            )}
           </div>
         )}
 
-        {/* Input box — hidden while listening (voice auto-sends on stop) */}
+        {/* ── Text input (hidden during active recording/transcribing) ───── */}
         <div className={`flex gap-2 items-end bg-[#1A202C] rounded-xl p-2 transition-colors border ${
-          isListening ? "hidden" : "border-white/10 focus-within:border-[#F5C800]/40"
+          micState === "recording" || micState === "transcribing"
+            ? "hidden"
+            : "border-white/10 focus-within:border-[#F5C800]/40"
         }`}>
           <div className="flex-1 relative">
             <textarea
@@ -664,31 +842,47 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
                 if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(input); }
               }}
               placeholder={hasDocument ? tr.askDocPlaceholder : tr.uploadToStartPlaceholder}
-              disabled={!hasDocument || isStreaming}
+              disabled={isStreaming}
               rows={1}
               className="w-full bg-transparent text-xs text-slate-300 placeholder-slate-600 outline-none resize-none min-h-[20px] max-h-[80px] disabled:cursor-not-allowed"
               style={{ lineHeight: "1.5" }}
             />
           </div>
 
-          {/* Mic button */}
-          {sttSupported ? (
+          {/* ── Mic button — 5-state ─────────────────────────────────── */}
+          {micAvailable ? (
             <button
               data-tour="mic-btn"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={startListening}
-              disabled={isStreaming}
-              title={!hasDocument ? "Upload a document first to use voice" : "Tap to speak — auto-sends when you stop"}
+              onClick={handleMicClick}
+              disabled={isStreaming || micState === "transcribing"}
+              title={
+                micState === "requesting"    ? "Requesting microphone…" :
+                micState === "recording"     ? "Click to stop and send" :
+                micState === "transcribing"  ? "Transcribing…" :
+                !hasDocument                 ? "Tap to speak (upload a document to send)" :
+                                               "Tap to speak — auto-sends when done"
+              }
               className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all shrink-0 disabled:cursor-not-allowed ${
-                !hasDocument
-                  ? "bg-white/5 text-slate-600 cursor-not-allowed"
+                micState === "requesting" || micState === "transcribing"
+                  ? "bg-[#F5C800]/15 text-[#F5C800]"
+                  : micState === "recording"
+                  ? "bg-red-500 text-white"
+                  : micState === "error"
+                  ? "bg-red-500/15 text-red-400 hover:bg-red-500/25"
                   : "bg-white/8 hover:bg-white/15 text-slate-400 hover:text-slate-200"
               }`}
             >
-              <Mic className="w-3.5 h-3.5" />
+              {micState === "requesting" || micState === "transcribing"
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : micState === "recording"
+                ? <Square   className="w-3 h-3" />
+                : <Mic      className="w-3.5 h-3.5" />
+              }
             </button>
           ) : (
-            <div title="Voice not supported in this browser — use Chrome or Edge" className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-slate-700 cursor-not-allowed">
+            <div title="Voice not supported in this browser"
+              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-slate-700 cursor-not-allowed">
               <MicOff className="w-3.5 h-3.5" />
             </div>
           )}
@@ -714,10 +908,10 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
         </div>
 
         <p className="text-[9px] text-slate-600 text-center mt-1.5">
-          {sttSupported
+          {micAvailable
             ? hasDocument
-              ? "🎤 Tap mic · speak · auto-sends · Coworker speaks back"
-              : "🎤 Upload a document first, then tap mic to speak"
+              ? "🎤 Tap mic · speak · tap again to send · Coworker speaks back"
+              : "🎤 Tap mic to speak (upload a document to enable auto-send)"
             : tr.keyboardHint}
         </p>
       </div>
