@@ -363,83 +363,106 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
   const startListening = useCallback(() => {
     const Ctor = getSpeechRecognition();
     if (!Ctor) {
-      setMicError("Voice input is not supported in this browser. Use Chrome or Edge.");
+      setMicError("Voice input requires Chrome or Edge.");
       return;
     }
     setMicError(null);
     pendingVoiceText.current = "";
 
-    // Prime TTS inside the click handler (user gesture) so Chrome allows async speak()
-    // later. Wrapped in try-catch — if speechSynthesis is unavailable or throws, we
-    // must NOT let it block rec.start() below.
-    try { primeTTS(); } catch (_) { /* non-fatal */ }
+    // ── Permission-first approach ──────────────────────────────────────────
+    // getUserMedia is called synchronously inside the click handler (user
+    // gesture) so Chrome shows its proper permission dialog.
+    // The stream stays ALIVE until rec.onstart fires — stopping it too early
+    // causes a brief mic-release gap that makes rec.start() fail with
+    // "not-allowed" on some browsers even after permission is granted.
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        // Permission granted. Prime TTS now (still in a microtask of the
+        // click gesture chain, so Chrome allows async speak() later).
+        try { primeTTS(); } catch (_) { /* non-fatal */ }
 
-    const rec = new Ctor();
-    rec.lang            = LOCALE_BCP47[locale]; // ← use app locale
-    rec.continuous      = false;
-    rec.interimResults  = true;
-    rec.maxAlternatives = 1;
+        const rec = new Ctor();
+        rec.lang           = LOCALE_BCP47[locale];
+        rec.continuous     = false;
+        rec.interimResults = true;
+        rec.maxAlternatives = 1;
 
-    rec.onstart = () => { setIsListening(true); wasVoiceInput.current = true; };
+        rec.onstart = () => {
+          // Release the getUserMedia stream now that STT has the mic
+          stream.getTracks().forEach((t) => t.stop());
+          setIsListening(true);
+          wasVoiceInput.current = true;
+        };
 
-    rec.onresult = (e: SpeechRecognitionEvent) => {
-      let interim = "";
-      let final   = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const transcript = e.results[i][0].transcript;
-        if (e.results[i].isFinal) final += transcript;
-        else interim += transcript;
-      }
-      if (interim) setInterimText(interim);
-      if (final) {
-        pendingVoiceText.current = (pendingVoiceText.current + " " + final).trim();
-        setInput(pendingVoiceText.current);
-        setInterimText("");
-      }
-    };
+        rec.onresult = (e: SpeechRecognitionEvent) => {
+          let interim = "", final = "";
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            const tx = e.results[i][0].transcript;
+            if (e.results[i].isFinal) final += tx;
+            else interim += tx;
+          }
+          if (interim) setInterimText(interim);
+          if (final) {
+            pendingVoiceText.current = (pendingVoiceText.current + " " + final).trim();
+            setInput(pendingVoiceText.current);
+            setInterimText("");
+          }
+        };
 
-    rec.onerror = (e: Event & { error?: string }) => {
-      const code = (e as { error?: string }).error ?? "unknown";
-      console.error("[mic] onerror:", code);
-      const msgs: Record<string, string> = {
-        "not-allowed":    "Microphone blocked. Click the 🔒 icon in the address bar → Site settings → allow Microphone → refresh and try again.",
-        "no-speech":      "No speech detected — speak louder or closer to the mic.",
-        "network":        "Network error during voice recognition.",
-        "audio-capture":  "No microphone found. Plug one in and try again.",
-        "aborted":        "",
-        "service-not-allowed": "Voice service blocked. Make sure the site has microphone permission and you are on HTTPS.",
-      };
-      const msg = msgs[code] ?? `Voice error (${code}) — check console for details.`;
-      if (msg) setMicError(msg);
-      setIsListening(false);
-      setInterimText("");
-    };
+        rec.onerror = (e: Event & { error?: string }) => {
+          const code = (e as { error?: string }).error ?? "unknown";
+          console.error("[mic] onerror:", code);
+          stream.getTracks().forEach((t) => t.stop());
+          const msgs: Record<string, string> = {
+            "not-allowed":         "Microphone blocked. Click the 🔒 in the address bar → Site settings → Microphone → Allow → refresh.",
+            "no-speech":           "No speech detected — speak louder or closer to the mic.",
+            "network":             "Network error during voice recognition.",
+            "audio-capture":       "No microphone found. Plug one in and try again.",
+            "aborted":             "",
+            "service-not-allowed": "Voice service blocked. Ensure the site has microphone permission and you are on HTTPS.",
+          };
+          const msg = msgs[code] ?? `Voice error (${code}).`;
+          if (msg) setMicError(msg);
+          setIsListening(false);
+          setInterimText("");
+        };
 
-    rec.onend = () => {
-      setIsListening(false);
-      setInterimText("");
-      recognitionRef.current = null;
+        rec.onend = () => {
+          stream.getTracks().forEach((t) => t.stop()); // safety cleanup
+          setIsListening(false);
+          setInterimText("");
+          recognitionRef.current = null;
 
-      const captured = pendingVoiceText.current.trim();
-      pendingVoiceText.current = "";
+          const captured = pendingVoiceText.current.trim();
+          pendingVoiceText.current = "";
+          if (captured) {
+            // Auto-send — AI will speak the reply back (fromVoice=true)
+            sendMessageRef.current(captured, true);
+          }
+        };
 
-      if (captured) {
-        // Grok-style: auto-send immediately. fromVoice=true means the AI reply
-        // will be spoken back automatically via TTS — no button press needed.
-        sendMessageRef.current(captured, true);
-      }
-    };
-
-    recognitionRef.current = rec;
-    try {
-      rec.start();
-      console.log("[mic] rec.start() called, lang:", LOCALE_BCP47[locale]);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("[mic] rec.start() threw:", msg);
-      setIsListening(false);
-      setMicError(`Could not start microphone: ${msg}. Check that your browser allows microphone access on this site.`);
-    }
+        recognitionRef.current = rec;
+        try {
+          rec.start();
+        } catch (err) {
+          stream.getTracks().forEach((t) => t.stop());
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error("[mic] rec.start() threw:", msg);
+          setIsListening(false);
+          setMicError(`Could not start microphone: ${msg}`);
+        }
+      })
+      .catch((err: Error) => {
+        console.error("[mic] getUserMedia failed:", err.name, err.message);
+        if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+          setMicError("Microphone blocked. Click the 🔒 in the address bar → Site settings → Microphone → Allow → refresh.");
+        } else if (err.name === "NotFoundError") {
+          setMicError("No microphone found. Plug one in and try again.");
+        } else {
+          setMicError(`Microphone error: ${err.message}`);
+        }
+      });
   }, [locale, primeTTS]);
 
   const stopListening = useCallback(() => {
