@@ -363,17 +363,16 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
   const startListening = useCallback(() => {
     const Ctor = getSpeechRecognition();
     if (!Ctor) {
-      setMicError("Voice recognition is not supported in this browser. Try Chrome or Edge.");
+      setMicError("Voice input is not supported in this browser. Use Chrome or Edge.");
       return;
     }
     setMicError(null);
     pendingVoiceText.current = "";
 
-    // Prime TTS synchronously — inside the click handler (user gesture) so Chrome
-    // allows async speak() calls later. rec.start() must also stay synchronous here:
-    // any await before it breaks the user-gesture context and Chrome silently blocks
-    // the microphone. The Web Speech API shows its own permission prompt on rec.start().
-    primeTTS();
+    // Prime TTS inside the click handler (user gesture) so Chrome allows async speak()
+    // later. Wrapped in try-catch — if speechSynthesis is unavailable or throws, we
+    // must NOT let it block rec.start() below.
+    try { primeTTS(); } catch (_) { /* non-fatal */ }
 
     const rec = new Ctor();
     rec.lang            = LOCALE_BCP47[locale]; // ← use app locale
@@ -401,14 +400,16 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
 
     rec.onerror = (e: Event & { error?: string }) => {
       const code = (e as { error?: string }).error ?? "unknown";
+      console.error("[mic] onerror:", code);
       const msgs: Record<string, string> = {
-        "not-allowed":    "Microphone blocked. Click the 🔒 icon in the address bar → allow microphone → try again.",
-        "no-speech":      "No speech detected — speak louder or move closer to the mic.",
+        "not-allowed":    "Microphone blocked. Click the 🔒 icon in the address bar → Site settings → allow Microphone → refresh and try again.",
+        "no-speech":      "No speech detected — speak louder or closer to the mic.",
         "network":        "Network error during voice recognition.",
         "audio-capture":  "No microphone found. Plug one in and try again.",
         "aborted":        "",
+        "service-not-allowed": "Voice service blocked. Make sure the site has microphone permission and you are on HTTPS.",
       };
-      const msg = msgs[code] ?? `Voice error: ${code}`;
+      const msg = msgs[code] ?? `Voice error (${code}) — check console for details.`;
       if (msg) setMicError(msg);
       setIsListening(false);
       setInterimText("");
@@ -432,10 +433,12 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
     recognitionRef.current = rec;
     try {
       rec.start();
+      console.log("[mic] rec.start() called, lang:", LOCALE_BCP47[locale]);
     } catch (err) {
-      console.error("[STT] start error", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[mic] rec.start() threw:", msg);
       setIsListening(false);
-      setMicError("Could not start microphone. Check browser permissions.");
+      setMicError(`Could not start microphone: ${msg}. Check that your browser allows microphone access on this site.`);
     }
   }, [locale, primeTTS]);
 
@@ -643,18 +646,26 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
             />
           </div>
 
-          {/* Mic button — tap to speak, auto-sends on silence */}
-          {sttSupported && (
+          {/* Mic button */}
+          {sttSupported ? (
             <button
               data-tour="mic-btn"
               onMouseDown={(e) => e.preventDefault()}
               onClick={startListening}
-              disabled={!hasDocument || isStreaming}
-              title="Speak — sends automatically when you stop"
-              className="w-7 h-7 rounded-lg flex items-center justify-center transition-all shrink-0 disabled:opacity-30 disabled:cursor-not-allowed bg-white/8 hover:bg-white/15 text-slate-400 hover:text-slate-200"
+              disabled={isStreaming}
+              title={!hasDocument ? "Upload a document first to use voice" : "Tap to speak — auto-sends when you stop"}
+              className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all shrink-0 disabled:cursor-not-allowed ${
+                !hasDocument
+                  ? "bg-white/5 text-slate-600 cursor-not-allowed"
+                  : "bg-white/8 hover:bg-white/15 text-slate-400 hover:text-slate-200"
+              }`}
             >
               <Mic className="w-3.5 h-3.5" />
             </button>
+          ) : (
+            <div title="Voice not supported in this browser — use Chrome or Edge" className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-slate-700 cursor-not-allowed">
+              <MicOff className="w-3.5 h-3.5" />
+            </div>
           )}
 
           {/* Camera button */}
@@ -678,7 +689,11 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
         </div>
 
         <p className="text-[9px] text-slate-600 text-center mt-1.5">
-          {sttSupported ? "🎤 Tap mic · speak · sends automatically · Coworker speaks back" : tr.keyboardHint}
+          {sttSupported
+            ? hasDocument
+              ? "🎤 Tap mic · speak · auto-sends · Coworker speaks back"
+              : "🎤 Upload a document first, then tap mic to speak"
+            : tr.keyboardHint}
         </p>
       </div>
 
