@@ -95,6 +95,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     mimeType: mime,
     ext,
     lang:     lang || "auto",
+    model,    // which model will be attempted first
   });
 
   // ── Call Whisper ───────────────────────────────────────────────────────────
@@ -145,6 +146,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const data = (await whisperResp.json()) as { text?: string };
   const transcript = (data.text ?? "").trim();
 
-  log.info("transcription complete", { chars: transcript.length });
+  log.info("transcription complete", { model, chars: transcript.length, empty: transcript.length === 0 });
   return NextResponse.json({ transcript });
 }

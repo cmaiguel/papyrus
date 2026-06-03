@@ -238,6 +238,9 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
   const sendMessage = useCallback(
     async (text: string, fromVoice = false) => {
       if (!text.trim() || !hasDocument || isStreaming) return;
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[coworker] request sent — chars:", text.length, "fromVoice:", fromVoice);
+      }
       stopSpeaking();
       // Honour wasVoiceInput flag even when called from keyboard send
       const speakReply = fromVoice || wasVoiceInput.current;
@@ -304,6 +307,9 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
           }
         }
 
+        if (process.env.NODE_ENV !== "production") {
+          console.log("[coworker] Claude response received — chars:", accumulated.length);
+        }
         const newIdx = updatedHistory.length;
         const aiMsg: ChatMessage = {
           role: "assistant",
@@ -468,12 +474,20 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
     setMicError(null);
     setInterimText("");
 
+    // Dev-only logger — no logs in production, no API keys or raw audio ever logged
+    const dev = process.env.NODE_ENV !== "production"
+      ? (...args: unknown[]) => console.log("[mic]", ...args)
+      : () => {};
+
+    dev("permission requested");
+
     // Prime TTS inside this user-gesture so Chrome allows async speak() later
     try { primeTTS(); } catch (_) { /* non-fatal */ }
 
     navigator.mediaDevices
       .getUserMedia({ audio: true })
       .then((stream) => {
+        dev("permission granted — tracks:", stream.getTracks().map(t => t.kind).join(","));
         mediaStreamRef.current = stream;
         audioChunksRef.current = [];
 
@@ -491,8 +505,13 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
           recorder = new MediaRecorder(stream);
         }
 
+        dev("recorder created — mimeType:", recorder.mimeType || "(browser default)");
+
         recorder.ondataavailable = (e) => {
-          if (e.data.size > 0) audioChunksRef.current.push(e.data);
+          if (e.data.size > 0) {
+            audioChunksRef.current.push(e.data);
+            dev("chunk received —", e.data.size, "bytes");
+          }
         };
 
         recorder.onstop = async () => {
@@ -505,8 +524,11 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
           });
           audioChunksRef.current = [];
 
+          dev("recorder stopped — blob:", blob.size, "bytes, type:", blob.type);
+
           // Too short to contain speech (< 0.5 s at 128 kbps ≈ 8 KB)
           if (blob.size < 4_000) {
+            dev("blob too small — skipping transcription");
             setMicState("idle");
             return;
           }
@@ -519,7 +541,9 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
             fd.append("audio", blob, "recording");
             fd.append("language", LOCALE_BCP47[locale]);
 
+            dev("transcribe request sent — size:", blob.size, "lang:", LOCALE_BCP47[locale]);
             const res = await fetch("/api/transcribe", { method: "POST", body: fd });
+            dev("transcribe response status:", res.status);
 
             // 503 = OPENAI_API_KEY not configured → inform user and fall back to Web Speech API
             if (res.status === 503) {
@@ -540,6 +564,7 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
             if (data.error) throw new Error(data.error);
 
             const transcript = (data.transcript ?? "").trim();
+            dev("transcript length:", transcript.length, transcript ? `"${transcript.slice(0,40)}…"` : "(empty)");
             setInterimText("");
 
             // Empty transcript = no speech detected
@@ -592,6 +617,7 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
         recorder.start(250);
         mediaRecorderRef.current = recorder;
         setMicState("recording");
+        dev("recorder started");
       })
       .catch((err: Error) => {
         if (process.env.NODE_ENV !== "production") {
