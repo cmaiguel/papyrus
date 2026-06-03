@@ -355,11 +355,32 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
 
   // ── STT ───────────────────────────────────────────────────────────────────
 
-  const startListening = useCallback(() => {
+  const startListening = useCallback(async () => {
     const Ctor = getSpeechRecognition();
-    if (!Ctor) return;
+    if (!Ctor) {
+      setMicError("Voice recognition is not supported in this browser. Try Chrome or Edge.");
+      return;
+    }
     setMicError(null);
     pendingVoiceText.current = "";
+
+    // Explicitly request microphone permission first — triggers the browser prompt.
+    // This must happen inside the click handler (user gesture) so Chrome doesn't block it.
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Release the stream immediately — we only needed the permission grant.
+      stream.getTracks().forEach((t) => t.stop());
+    } catch (err) {
+      const name = err instanceof Error ? err.name : "";
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        setMicError("Microphone access denied. Click the lock icon in your browser address bar to allow it.");
+      } else if (name === "NotFoundError") {
+        setMicError("No microphone found. Plug one in and try again.");
+      } else {
+        setMicError("Could not access microphone. Check browser settings.");
+      }
+      return;
+    }
 
     // Prime TTS NOW — during this user gesture — so Chrome allows async speak later
     primeTTS();
@@ -392,7 +413,7 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
       const code = (e as { error?: string }).error ?? "unknown";
       const msgs: Record<string, string> = {
         "not-allowed":    "Microphone access denied. Allow it in browser settings.",
-        "no-speech":      "No speech detected. Try again.",
+        "no-speech":      "No speech detected — try speaking louder or closer to the mic.",
         "network":        "Network error during voice recognition.",
         "audio-capture":  "No microphone found.",
         "aborted":        "",
@@ -408,8 +429,8 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
       setInterimText("");
       recognitionRef.current = null;
 
-      // Populate input for user to review — do NOT auto-send
-      // Factory-floor: let the operator verify transcript before sending
+      // Populate input for user to review — do NOT auto-send.
+      // Factory-floor: let the operator verify transcript before sending.
       const captured = pendingVoiceText.current.trim();
       if (captured) {
         setInput(captured);
@@ -427,7 +448,7 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
       setIsListening(false);
       setMicError("Could not start microphone. Check browser permissions.");
     }
-  }, [locale, hasDocument, sendMessage, primeTTS]);
+  }, [locale, primeTTS]);
 
   const stopListening = useCallback(() => {
     recognitionRef.current?.stop();

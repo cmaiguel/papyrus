@@ -16,6 +16,7 @@ import {
   ScanLine,
 } from "lucide-react";
 import type { PapyrusDocument } from "@/lib/types";
+import { useLanguage } from "@/lib/language-context";
 import EntryScreen from "./EntryScreen";
 
 interface DocumentViewerProps {
@@ -53,6 +54,7 @@ export default function DocumentViewer({
   onFilesSelected,
   onDriveConnect,
 }: DocumentViewerProps) {
+  const { tr } = useLanguage();
   const [zoom, setZoom] = useState(100);
   const [viewMode, setViewMode] = useState<ViewMode>("document");
   const [showFields, setShowFields] = useState(true);
@@ -149,7 +151,7 @@ export default function DocumentViewer({
           </span>
           <span className="flex items-center gap-1 text-[10px] text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full shrink-0">
             <CheckCircle2 className="w-2.5 h-2.5" />
-            {document?.isMockMode ? "OCR" : "AI Analyzed"}
+            {document?.isMockMode ? tr.ocrBadge : tr.aiAnalyzed}
           </span>
         </div>
 
@@ -165,7 +167,7 @@ export default function DocumentViewer({
               }`}
             >
               <ScanLine className="w-3 h-3" />
-              Original
+              {tr.originalTab}
             </button>
           )}
           <button
@@ -177,7 +179,7 @@ export default function DocumentViewer({
             }`}
           >
             <FileSearch className="w-3 h-3" />
-            Analysis
+            {tr.analysisTab}
           </button>
           <button
             onClick={() => setViewMode("text")}
@@ -188,7 +190,7 @@ export default function DocumentViewer({
             }`}
           >
             <FileText className="w-3 h-3" />
-            Text
+            {tr.textTab}
           </button>
 
           <button
@@ -200,7 +202,7 @@ export default function DocumentViewer({
             }`}
           >
             <Grid className="w-3 h-3" />
-            Fields
+            {tr.fieldsBtn}
           </button>
 
           {viewMode !== "document" && (
@@ -233,16 +235,16 @@ export default function DocumentViewer({
       >
         <input {...getInputProps()} />
         <p className="text-[10px] text-slate-600 hover:text-slate-500 transition-colors">
-          {isDragActive ? "↓ Drop to replace" : "Drop or click to replace document"}
+          {isDragActive ? `↓ ${tr.dropToReplace}` : tr.dropToReplace}
         </p>
       </div>
 
-      {/* Main area */}
-      <div className="flex flex-1 overflow-hidden">
+      {/* Main area — flex row: content takes flex-1 min-w-0, fields sidebar is fixed w-52 */}
+      <div className="flex flex-1 overflow-hidden min-h-0">
 
         {/* ── Original document view ─────────────────────────────────────── */}
         {viewMode === "document" && (
-          <div className="flex-1 overflow-hidden p-3">
+          <div className="flex-1 overflow-hidden p-3 min-w-0">
             {fileUrl ? (
               isPdf ? (
                 <iframe
@@ -262,7 +264,7 @@ export default function DocumentViewer({
                 </div>
               ) : (
                 <div className="flex items-center justify-center h-full text-slate-500 text-sm">
-                  Preview not available for this file type
+                  {tr.previewUnavailable}
                 </div>
               )
             ) : (
@@ -272,17 +274,14 @@ export default function DocumentViewer({
                   <FileText className="w-7 h-7 text-slate-500" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-slate-400 mb-1">Original file not available</p>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    The original file is only available during the current session.<br />
-                    Re-upload the file to view it again, or switch to Analysis view.
-                  </p>
+                  <p className="text-sm font-medium text-slate-400 mb-1">{tr.originalUnavailable}</p>
+                  <p className="text-xs text-slate-600 leading-relaxed">{tr.originalUnavailableDesc}</p>
                 </div>
                 <button
                   onClick={() => setViewMode("analysis")}
                   className="text-xs text-[#F5C800] hover:underline"
                 >
-                  View Analysis instead →
+                  {tr.viewAnalysis}
                 </button>
               </div>
             )}
@@ -291,7 +290,7 @@ export default function DocumentViewer({
 
         {/* ── Analysis view ──────────────────────────────────────────────── */}
         {viewMode === "analysis" && (
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="flex-1 overflow-y-auto p-4 min-w-0">
             <div className="space-y-3">
               {meta?.summary && (
                 <div className="bg-[#232B38] rounded-xl border border-[#F5C800]/20 p-4">
@@ -353,7 +352,7 @@ export default function DocumentViewer({
 
         {/* ── Raw text view ──────────────────────────────────────────────── */}
         {viewMode === "text" && (
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="flex-1 overflow-y-auto p-4 min-w-0">
             <div
               className="bg-[#232B38] rounded-xl border border-white/8 p-4 font-mono text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap"
               style={{ fontSize: `${(zoom / 100) * 11}px` }}
@@ -379,7 +378,7 @@ export default function DocumentViewer({
                       : "text-slate-500 hover:text-slate-300"
                   }`}
                 >
-                  {tab}
+                  {tab === "fields" ? tr.fieldsBtn : tab === "ops" ? tr.operationsTab : tr.risksTab}
                 </button>
               ))}
             </div>

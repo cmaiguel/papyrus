@@ -40,13 +40,13 @@ function docStatusIcon(doc: PapyrusDocument) {
   return <CheckCircle2 className="w-2.5 h-2.5 text-green-400 shrink-0" />;
 }
 
-function formatTime(iso: string) {
+function formatTime(iso: string, tr: import("@/lib/i18n").T) {
   const d = new Date(iso);
   const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
-  if (diffMin < 1) return "just now";
-  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 1) return tr.justNow;
+  if (diffMin < 60) return tr.mAgo(diffMin);
   const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffHr < 24) return tr.hAgo(diffHr);
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
@@ -110,7 +110,7 @@ function DocRow({
         <>
           {docStatusIcon(doc)}
           <span className="text-[10px] text-slate-300 truncate flex-1 mx-2">{docLabel(doc)}</span>
-          {!hovered && <span className="text-[9px] text-slate-600 shrink-0">{formatTime(doc.uploadedAt)}</span>}
+          {!hovered && <span className="text-[9px] text-slate-600 shrink-0">{formatTime(doc.uploadedAt, tr)}</span>}
         </>
       ) : (
         <>
@@ -120,7 +120,7 @@ function DocRow({
             {!hovered && (
               <div className="flex items-center gap-1.5 mt-0.5">
                 <Clock className="w-2.5 h-2.5 text-slate-600 shrink-0" />
-                <span className="text-[9px] text-slate-600">{formatTime(doc.uploadedAt)}</span>
+                <span className="text-[9px] text-slate-600">{formatTime(doc.uploadedAt, tr)}</span>
               </div>
             )}
           </div>
@@ -340,11 +340,11 @@ export default function NavPanel({
       <div className="border-t border-white/8 px-3 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-full bg-[#F5C800]/20 border border-[#F5C800]/30 flex items-center justify-center">
-            <span className="text-[10px] font-bold text-[#F5C800]">JD</span>
+            <span className="text-[10px] font-bold text-[#F5C800]">CM</span>
           </div>
           <div>
-            <div className="text-[11px] font-medium text-slate-200">John D.</div>
-            <div className="text-[9px] text-slate-500">{tr.engineerRole}</div>
+            <div className="text-[11px] font-medium text-slate-200">Carlos Maiguel</div>
+            <div className="text-[9px] text-slate-500">Corello</div>
           </div>
         </div>
         <div className="flex items-center gap-1">
