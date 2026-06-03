@@ -265,7 +265,7 @@ export default function ArtifactPanel({ document, activeArtifactType }: Artifact
 
       {/* No document state */}
       {!hasDocument ? (
-        <div className="flex flex-col items-center justify-center flex-1 text-center px-6">
+        <div className="flex flex-col items-center justify-center flex-1 min-h-0 overflow-y-auto text-center px-6">
           <div className="w-12 h-12 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-3">
             <Layers className="w-6 h-6 text-purple-400" />
           </div>
@@ -327,7 +327,7 @@ export default function ArtifactPanel({ document, activeArtifactType }: Artifact
           </div>
 
           {/* Artifact content */}
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="flex-1 overflow-y-auto min-h-0 p-4">
             {error && (
               <div className="text-xs text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2 mb-3">
                 {error}

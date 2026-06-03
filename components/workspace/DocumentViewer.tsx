@@ -290,7 +290,7 @@ export default function DocumentViewer({
 
         {/* ── Analysis view ──────────────────────────────────────────────── */}
         {viewMode === "analysis" && (
-          <div className="flex-1 overflow-y-auto p-4 min-w-0">
+          <div className="flex-1 overflow-y-auto min-h-0 p-4 min-w-0">
             <div className="space-y-3">
               {meta?.summary && (
                 <div className="bg-[#232B38] rounded-xl border border-[#F5C800]/20 p-4">
@@ -352,7 +352,7 @@ export default function DocumentViewer({
 
         {/* ── Raw text view ──────────────────────────────────────────────── */}
         {viewMode === "text" && (
-          <div className="flex-1 overflow-y-auto p-4 min-w-0">
+          <div className="flex-1 overflow-y-auto min-h-0 p-4 min-w-0">
             <div
               className="bg-[#232B38] rounded-xl border border-white/8 p-4 font-mono text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap"
               style={{ fontSize: `${(zoom / 100) * 11}px` }}

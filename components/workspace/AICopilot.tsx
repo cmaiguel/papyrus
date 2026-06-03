@@ -495,7 +495,7 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+      <div className="flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-5">
         {!hasDocument && (
           <div className="flex flex-col items-center justify-center h-full text-center px-4">
             <div className="w-12 h-12 rounded-2xl bg-[#F5C800]/10 border border-[#F5C800]/20 flex items-center justify-center mb-3">

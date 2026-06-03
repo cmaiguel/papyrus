@@ -237,7 +237,7 @@ export default function NavPanel({
       </div>
 
       {/* List */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto min-h-0">
         {documents.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full px-4 text-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-[#F5C800]/10 border border-[#F5C800]/20 flex items-center justify-center">
