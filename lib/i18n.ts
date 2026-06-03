@@ -58,6 +58,24 @@ export interface T {
   // Proactive banner
   generateBtn: string;
   dismissBtn: string;
+
+  // Entry screen
+  documentViewer: string;
+  uploadBtn: string;
+  dropHere: string;
+  dropToUpload: string;
+  browseFiles: string;
+  singleTraveler: string;
+  singleTravelerDesc: string;
+  jobPack: string;
+  jobPackDesc: string;
+  connectDrive: string;
+  connectDriveDesc: string;
+
+  // Artifact panel
+  artifactsLabel: string;
+  noArtifactsYet: string;
+  noArtifactsDesc: string;
 }
 
 const translations: Record<AnyLocale, T> = {
@@ -116,6 +134,20 @@ const translations: Record<AnyLocale, T> = {
     previewUnavailable: "Preview not available for this file type",
     generateBtn: "Generate",
     dismissBtn: "Dismiss",
+    documentViewer: "Document Viewer",
+    uploadBtn: "Upload",
+    dropHere: "Drop a paper traveler here",
+    dropToUpload: "Drop to upload",
+    browseFiles: "Browse Files",
+    singleTraveler: "Single Traveler",
+    singleTravelerDesc: "One PDF or image",
+    jobPack: "Job Pack",
+    jobPackDesc: "Multiple docs, auto-grouped",
+    connectDrive: "Connect Drive",
+    connectDriveDesc: "Google Drive · SharePoint",
+    artifactsLabel: "Artifacts",
+    noArtifactsYet: "No Artifacts Yet",
+    noArtifactsDesc: "Upload a manufacturing document and AI will generate real SOPs, checklists, risk reports, and structured data from your actual document content.",
   },
 
   es: {
@@ -173,6 +205,20 @@ const translations: Record<AnyLocale, T> = {
     previewUnavailable: "Vista previa no disponible para este tipo de archivo",
     generateBtn: "Generar",
     dismissBtn: "Cerrar",
+    documentViewer: "Visor de Documentos",
+    uploadBtn: "Subir",
+    dropHere: "Suelta un traveler aquí",
+    dropToUpload: "Suelta para subir",
+    browseFiles: "Explorar Archivos",
+    singleTraveler: "Traveler Individual",
+    singleTravelerDesc: "Un PDF o imagen",
+    jobPack: "Paquete de Job",
+    jobPackDesc: "Múltiples docs, agrupados automáticamente",
+    connectDrive: "Conectar Drive",
+    connectDriveDesc: "Google Drive · SharePoint",
+    artifactsLabel: "Artefactos",
+    noArtifactsYet: "Sin Artefactos Aún",
+    noArtifactsDesc: "Sube un documento de manufactura y la IA generará SOPs, listas de verificación, reportes de riesgo y datos estructurados.",
   },
 
   fr: {
@@ -230,6 +276,20 @@ const translations: Record<AnyLocale, T> = {
     previewUnavailable: "Aperçu non disponible pour ce type de fichier",
     generateBtn: "Générer",
     dismissBtn: "Fermer",
+    documentViewer: "Visionneuse de Documents",
+    uploadBtn: "Importer",
+    dropHere: "Déposez un traveler ici",
+    dropToUpload: "Déposez pour importer",
+    browseFiles: "Parcourir les fichiers",
+    singleTraveler: "Traveler unique",
+    singleTravelerDesc: "Un PDF ou une image",
+    jobPack: "Pack de job",
+    jobPackDesc: "Plusieurs docs, groupés automatiquement",
+    connectDrive: "Connecter Drive",
+    connectDriveDesc: "Google Drive · SharePoint",
+    artifactsLabel: "Artefacts",
+    noArtifactsYet: "Aucun artefact",
+    noArtifactsDesc: "Importez un document et l'IA générera des SOPs, listes de contrôle, rapports de risques et données structurées.",
   },
 
   de: {
@@ -287,6 +347,20 @@ const translations: Record<AnyLocale, T> = {
     previewUnavailable: "Vorschau für diesen Dateityp nicht verfügbar",
     generateBtn: "Generieren",
     dismissBtn: "Schließen",
+    documentViewer: "Dokumenten-Viewer",
+    uploadBtn: "Hochladen",
+    dropHere: "Traveler hier ablegen",
+    dropToUpload: "Zum Hochladen ablegen",
+    browseFiles: "Dateien durchsuchen",
+    singleTraveler: "Einzelner Traveler",
+    singleTravelerDesc: "Eine PDF oder ein Bild",
+    jobPack: "Job-Paket",
+    jobPackDesc: "Mehrere Dokumente, automatisch gruppiert",
+    connectDrive: "Drive verbinden",
+    connectDriveDesc: "Google Drive · SharePoint",
+    artifactsLabel: "Artefakte",
+    noArtifactsYet: "Noch keine Artefakte",
+    noArtifactsDesc: "Laden Sie ein Fertigungsdokument hoch und die KI generiert SOPs, Checklisten, Risikoberichte und strukturierte Daten.",
   },
 
   pt: {
@@ -344,6 +418,20 @@ const translations: Record<AnyLocale, T> = {
     previewUnavailable: "Visualização não disponível para este tipo de arquivo",
     generateBtn: "Gerar",
     dismissBtn: "Fechar",
+    documentViewer: "Visualizador de Documentos",
+    uploadBtn: "Enviar",
+    dropHere: "Solte um traveler aqui",
+    dropToUpload: "Solte para enviar",
+    browseFiles: "Procurar Arquivos",
+    singleTraveler: "Traveler Individual",
+    singleTravelerDesc: "Um PDF ou imagem",
+    jobPack: "Pacote de Job",
+    jobPackDesc: "Múltiplos docs, agrupados automaticamente",
+    connectDrive: "Conectar Drive",
+    connectDriveDesc: "Google Drive · SharePoint",
+    artifactsLabel: "Artefatos",
+    noArtifactsYet: "Nenhum Artefato Ainda",
+    noArtifactsDesc: "Carregue um documento e a IA gerará SOPs, listas de verificação, relatórios de risco e dados estruturados.",
   },
 
   zh: {
@@ -401,6 +489,20 @@ const translations: Record<AnyLocale, T> = {
     previewUnavailable: "此文件类型不支持预览",
     generateBtn: "生成",
     dismissBtn: "关闭",
+    documentViewer: "文档查看器",
+    uploadBtn: "上传",
+    dropHere: "将工单拖放到此处",
+    dropToUpload: "释放以上传",
+    browseFiles: "浏览文件",
+    singleTraveler: "单个工单",
+    singleTravelerDesc: "一个PDF或图片",
+    jobPack: "作业包",
+    jobPackDesc: "多个文档，自动分组",
+    connectDrive: "连接网盘",
+    connectDriveDesc: "Google Drive · SharePoint",
+    artifactsLabel: "文件",
+    noArtifactsYet: "暂无文件",
+    noArtifactsDesc: "上传制造文档，AI将生成SOP、检查清单、风险报告和结构化数据。",
   },
 
   ja: {
@@ -458,6 +560,20 @@ const translations: Record<AnyLocale, T> = {
     previewUnavailable: "このファイルタイプはプレビュー不可",
     generateBtn: "生成",
     dismissBtn: "閉じる",
+    documentViewer: "ドキュメントビューア",
+    uploadBtn: "アップロード",
+    dropHere: "トラベラーをここにドロップ",
+    dropToUpload: "ドロップしてアップロード",
+    browseFiles: "ファイルを参照",
+    singleTraveler: "シングルトラベラー",
+    singleTravelerDesc: "1つのPDFまたは画像",
+    jobPack: "ジョブパック",
+    jobPackDesc: "複数のドキュメント、自動グループ化",
+    connectDrive: "ドライブを接続",
+    connectDriveDesc: "Google Drive · SharePoint",
+    artifactsLabel: "アーティファクト",
+    noArtifactsYet: "アーティファクトなし",
+    noArtifactsDesc: "製造ドキュメントをアップロードすると、AIがSOP、チェックリスト、リスクレポートを生成します。",
   },
 };
 

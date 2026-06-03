@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { PapyrusDocument, ArtifactType, GeneratedArtifact } from "@/lib/types";
 import { saveArtifact } from "@/lib/document-store";
+import { useLanguage } from "@/lib/language-context";
 
 interface ArtifactPanelProps {
   document: PapyrusDocument | null;
@@ -152,6 +153,7 @@ function MarkdownContent({ content }: { content: string }) {
 }
 
 export default function ArtifactPanel({ document, activeArtifactType }: ArtifactPanelProps) {
+  const { tr } = useLanguage();
   const [selectedType, setSelectedType] = useState<ArtifactType>("traveler_summary");
   const [loadingType, setLoadingType] = useState<ArtifactType | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -232,7 +234,7 @@ export default function ArtifactPanel({ document, activeArtifactType }: Artifact
           <div className="w-6 h-6 rounded-lg bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">
             <Sparkles className="w-3.5 h-3.5 text-purple-400" />
           </div>
-          <span className="text-sm font-semibold text-slate-200">Artifacts</span>
+          <span className="text-sm font-semibold text-slate-200">{tr.artifactsLabel}</span>
         </div>
         <div className="flex items-center gap-1">
           {currentArtifact && (
@@ -267,11 +269,8 @@ export default function ArtifactPanel({ document, activeArtifactType }: Artifact
           <div className="w-12 h-12 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-3">
             <Layers className="w-6 h-6 text-purple-400" />
           </div>
-          <p className="text-sm text-slate-400 font-medium mb-2">No Artifacts Yet</p>
-          <p className="text-xs text-slate-600 mb-6">
-            Upload a manufacturing document and AI will generate real SOPs, checklists, risk
-            reports, and structured data from your actual document content.
-          </p>
+          <p className="text-sm text-slate-400 font-medium mb-2">{tr.noArtifactsYet}</p>
+          <p className="text-xs text-slate-600 mb-6">{tr.noArtifactsDesc}</p>
           <div className="space-y-2 w-full">
             {ARTIFACT_CONFIG.slice(0, 4).map(({ icon, label, description }) => (
               <div

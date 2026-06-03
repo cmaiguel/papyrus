@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Upload, FileText, FolderOpen, HardDrive, ChevronDown, X } from "lucide-react";
+import { useLanguage } from "@/lib/language-context";
 
 interface EntryScreenProps {
   onFilesSelected: (files: File[]) => void;
@@ -10,6 +11,7 @@ interface EntryScreenProps {
 }
 
 export default function EntryScreen({ onFilesSelected, onDriveConnect }: EntryScreenProps) {
+  const { tr } = useLanguage();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -67,7 +69,7 @@ export default function EntryScreen({ onFilesSelected, onDriveConnect }: EntrySc
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/8 bg-[#232B38] shrink-0">
         <div className="flex items-center gap-2">
           <FileText className="w-4 h-4 text-[#F5C800]" />
-          <span className="text-sm font-medium text-slate-200">Document Viewer</span>
+          <span className="text-sm font-medium text-slate-200">{tr.documentViewer}</span>
         </div>
 
         {/* Upload options dropdown */}
@@ -77,7 +79,7 @@ export default function EntryScreen({ onFilesSelected, onDriveConnect }: EntrySc
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F5C800]/10 border border-[#F5C800]/20 text-[#F5C800] text-xs font-medium hover:bg-[#F5C800]/15 transition-colors"
           >
             <Upload className="w-3.5 h-3.5" />
-            Upload
+            {tr.uploadBtn}
             <ChevronDown className={`w-3 h-3 transition-transform ${menuOpen ? "rotate-180" : ""}`} />
           </button>
 
@@ -91,8 +93,8 @@ export default function EntryScreen({ onFilesSelected, onDriveConnect }: EntrySc
                 >
                   <FileText className="w-4 h-4 text-[#F5C800] shrink-0 mt-0.5" />
                   <div>
-                    <div className="text-xs font-semibold text-slate-200">Single Traveler</div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">One PDF or image</div>
+                    <div className="text-xs font-semibold text-slate-200">{tr.singleTraveler}</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">{tr.singleTravelerDesc}</div>
                   </div>
                 </button>
                 <button
@@ -101,8 +103,8 @@ export default function EntryScreen({ onFilesSelected, onDriveConnect }: EntrySc
                 >
                   <FolderOpen className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
                   <div>
-                    <div className="text-xs font-semibold text-slate-200">Job Pack</div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">Multiple docs, auto-grouped</div>
+                    <div className="text-xs font-semibold text-slate-200">{tr.jobPack}</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">{tr.jobPackDesc}</div>
                   </div>
                 </button>
                 <button
@@ -111,8 +113,8 @@ export default function EntryScreen({ onFilesSelected, onDriveConnect }: EntrySc
                 >
                   <HardDrive className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                   <div>
-                    <div className="text-xs font-semibold text-slate-200">Connect Drive</div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">Google Drive · SharePoint</div>
+                    <div className="text-xs font-semibold text-slate-200">{tr.connectDrive}</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">{tr.connectDriveDesc}</div>
                   </div>
                 </button>
               </div>
@@ -139,7 +141,7 @@ export default function EntryScreen({ onFilesSelected, onDriveConnect }: EntrySc
             </div>
           </div>
           <h3 className="text-base font-semibold text-slate-200 mb-2">
-            {isDragActive ? "Drop to upload" : "Drop a paper traveler here"}
+            {isDragActive ? tr.dropToUpload : tr.dropHere}
           </h3>
           <p className="text-sm text-slate-500 mb-1">
             Travelers · SOPs · Inspection Sheets · Drawings
@@ -147,7 +149,7 @@ export default function EntryScreen({ onFilesSelected, onDriveConnect }: EntrySc
           <p className="text-xs text-slate-600 mb-6">PDF · PNG · JPG · TIFF · up to 20 MB</p>
           <span className="inline-flex items-center gap-2 px-4 py-2 bg-[#F5C800]/10 border border-[#F5C800]/20 rounded-lg text-[#F5C800] text-sm font-medium hover:bg-[#F5C800]/15 transition-colors">
             <FileText className="w-3.5 h-3.5" />
-            Browse Files
+            {tr.browseFiles}
           </span>
         </div>
       </div>
