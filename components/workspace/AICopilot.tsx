@@ -355,7 +355,7 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
 
   // ── STT ───────────────────────────────────────────────────────────────────
 
-  const startListening = useCallback(async () => {
+  const startListening = useCallback(() => {
     const Ctor = getSpeechRecognition();
     if (!Ctor) {
       setMicError("Voice recognition is not supported in this browser. Try Chrome or Edge.");
@@ -364,25 +364,10 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
     setMicError(null);
     pendingVoiceText.current = "";
 
-    // Explicitly request microphone permission first — triggers the browser prompt.
-    // This must happen inside the click handler (user gesture) so Chrome doesn't block it.
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Release the stream immediately — we only needed the permission grant.
-      stream.getTracks().forEach((t) => t.stop());
-    } catch (err) {
-      const name = err instanceof Error ? err.name : "";
-      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        setMicError("Microphone access denied. Click the lock icon in your browser address bar to allow it.");
-      } else if (name === "NotFoundError") {
-        setMicError("No microphone found. Plug one in and try again.");
-      } else {
-        setMicError("Could not access microphone. Check browser settings.");
-      }
-      return;
-    }
-
-    // Prime TTS NOW — during this user gesture — so Chrome allows async speak later
+    // Prime TTS synchronously — inside the click handler (user gesture) so Chrome
+    // allows async speak() calls later. rec.start() must also stay synchronous here:
+    // any await before it breaks the user-gesture context and Chrome silently blocks
+    // the microphone. The Web Speech API shows its own permission prompt on rec.start().
     primeTTS();
 
     const rec = new Ctor();
@@ -412,10 +397,10 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
     rec.onerror = (e: Event & { error?: string }) => {
       const code = (e as { error?: string }).error ?? "unknown";
       const msgs: Record<string, string> = {
-        "not-allowed":    "Microphone access denied. Allow it in browser settings.",
-        "no-speech":      "No speech detected — try speaking louder or closer to the mic.",
+        "not-allowed":    "Microphone blocked. Click the 🔒 icon in the address bar → allow microphone → try again.",
+        "no-speech":      "No speech detected — speak louder or move closer to the mic.",
         "network":        "Network error during voice recognition.",
-        "audio-capture":  "No microphone found.",
+        "audio-capture":  "No microphone found. Plug one in and try again.",
         "aborted":        "",
       };
       const msg = msgs[code] ?? `Voice error: ${code}`;
