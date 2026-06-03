@@ -137,8 +137,10 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
   const recognitionRef    = useRef<SpeechRecognitionInstance | null>(null);
   const wasVoiceInput     = useRef(false);
   const keepAliveRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Pending voice transcript — used for auto-send after STT ends
+  // Pending voice transcript — accumulated during recognition, auto-sent on end
   const pendingVoiceText  = useRef("");
+  // Stable ref so STT onend can always call the latest sendMessage without stale closure
+  const sendMessageRef    = useRef<(text: string, fromVoice?: boolean) => void>(() => {});
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -320,6 +322,9 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
      onGenerateArtifact, onChatUpdated, speak, stopSpeaking]
   );
 
+  // Keep the ref in sync so voice handlers always call the latest version
+  useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
+
   // ── Camera analysis result → inject into chat ────────────────────────────
 
   const handleCameraAnalysis = useCallback(
@@ -414,14 +419,13 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
       setInterimText("");
       recognitionRef.current = null;
 
-      // Populate input for user to review — do NOT auto-send.
-      // Factory-floor: let the operator verify transcript before sending.
       const captured = pendingVoiceText.current.trim();
+      pendingVoiceText.current = "";
+
       if (captured) {
-        setInput(captured);
-        pendingVoiceText.current = "";
-        // Signal that this came from voice so TTS reply is enabled on send
-        wasVoiceInput.current = true;
+        // Grok-style: auto-send immediately. fromVoice=true means the AI reply
+        // will be spoken back automatically via TTS — no button press needed.
+        sendMessageRef.current(captured, true);
       }
     };
 
@@ -598,49 +602,58 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
           </div>
         )}
 
-        {/* Input box — border turns red while listening */}
+        {/* Listening banner — replaces input box while mic is active */}
+        {isListening && (
+          <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 rounded-xl px-3 py-2.5 mb-2">
+            <div className="flex items-center gap-0.5 shrink-0">
+              {[0, 120, 240, 120, 0].map((delay, k) => (
+                <span key={k} className="w-0.5 bg-red-400 rounded-full animate-bounce"
+                  style={{ height: `${6 + k * 2}px`, animationDelay: `${delay}ms` }} />
+              ))}
+            </div>
+            <span className="text-[11px] text-red-300 flex-1 truncate">
+              {interimText || tr.listeningNow}
+            </span>
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={stopListening}
+              className="text-[10px] text-red-400 hover:text-red-300 shrink-0 font-medium"
+            >
+              {tr.stop}
+            </button>
+          </div>
+        )}
+
+        {/* Input box — hidden while listening (voice auto-sends on stop) */}
         <div className={`flex gap-2 items-end bg-[#1A202C] rounded-xl p-2 transition-colors border ${
-          isListening ? "border-red-500/60" : "border-white/10 focus-within:border-[#F5C800]/40"
+          isListening ? "hidden" : "border-white/10 focus-within:border-[#F5C800]/40"
         }`}>
           <div className="flex-1 relative">
             <textarea
-              value={isListening ? (input + (interimText ? (input ? " " : "") + interimText : "")) : input}
-              onChange={(e) => { if (!isListening) { setInput(e.target.value); wasVoiceInput.current = false; } }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(input); }
-            }}
+              value={input}
+              onChange={(e) => { setInput(e.target.value); wasVoiceInput.current = false; }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(input); }
+              }}
               placeholder={hasDocument ? tr.askDocPlaceholder : tr.uploadToStartPlaceholder}
               disabled={!hasDocument || isStreaming}
               rows={1}
               className="w-full bg-transparent text-xs text-slate-300 placeholder-slate-600 outline-none resize-none min-h-[20px] max-h-[80px] disabled:cursor-not-allowed"
               style={{ lineHeight: "1.5" }}
             />
-            {/* Listening waveform overlay inside textarea */}
-            {isListening && (
-              <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-0.5 pointer-events-none">
-                {[0, 150, 300, 150, 0].map((delay, k) => (
-                  <span key={k} className="w-0.5 bg-red-400 rounded-full animate-bounce"
-                    style={{ height: `${5 + k * 2}px`, animationDelay: `${delay}ms` }} />
-                ))}
-              </div>
-            )}
           </div>
 
-          {/* Mic button */}
+          {/* Mic button — tap to speak, auto-sends on silence */}
           {sttSupported && (
             <button
               data-tour="mic-btn"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={isListening ? stopListening : startListening}
+              onClick={startListening}
               disabled={!hasDocument || isStreaming}
-              title={isListening ? "Stop listening" : "Speak (any language)"}
-              className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all shrink-0 disabled:opacity-30 disabled:cursor-not-allowed ${
-                isListening
-                  ? "bg-red-500 hover:bg-red-400"
-                  : "bg-white/8 hover:bg-white/15 text-slate-400 hover:text-slate-200"
-              }`}
+              title="Speak — sends automatically when you stop"
+              className="w-7 h-7 rounded-lg flex items-center justify-center transition-all shrink-0 disabled:opacity-30 disabled:cursor-not-allowed bg-white/8 hover:bg-white/15 text-slate-400 hover:text-slate-200"
             >
-              {isListening ? <MicOff className="w-3.5 h-3.5 text-white" /> : <Mic className="w-3.5 h-3.5" />}
+              <Mic className="w-3.5 h-3.5" />
             </button>
           )}
 
@@ -665,7 +678,7 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
         </div>
 
         <p className="text-[9px] text-slate-600 text-center mt-1.5">
-          {sttSupported ? tr.voiceHint : tr.keyboardHint}
+          {sttSupported ? "🎤 Tap mic · speak · sends automatically · Coworker speaks back" : tr.keyboardHint}
         </p>
       </div>
 
