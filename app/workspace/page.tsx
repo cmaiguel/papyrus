@@ -355,8 +355,9 @@ export default function WorkspacePage() {
         />
       )}
 
-      {/* ── Workspace shell ─────────────────────────────────────────────── */}
-      <div className="h-full w-full flex overflow-hidden bg-[#1A202C]">
+      {/* ── Workspace shell — fixed inset-0 guarantees viewport height
+           without depending on the h-full chain through Next.js wrappers ── */}
+      <div className="fixed inset-0 flex overflow-hidden bg-[#1A202C]">
 
         {/* ── Panel 1 — Navigation ────────────────────────────────────────── */}
         <div

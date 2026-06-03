@@ -489,7 +489,7 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
 
       {/* Proactive suggestions */}
       {hasDocument && document && (
-        <div className="border-b border-white/8">
+        <div className="border-b border-white/8 shrink-0">
           <ProactiveBanner document={document} onGenerateArtifact={(type: ArtifactType) => onGenerateArtifact(type)} />
         </div>
       )}
