@@ -14,7 +14,7 @@ export const maxDuration = 30;
  *   language — optional BCP-47 hint, e.g. "en-US" (converted to ISO 639-1 for Whisper)
  *
  * Response:
- *   200 { transcript: string }
+ *   200 { text: string }
  *   400 { error: string }   — bad request
  *   429                     — rate limited
  *   503 { error: string }   — OPENAI_API_KEY not configured
@@ -133,7 +133,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       if (fallback?.ok) {
         const fd = (await fallback.json()) as { text?: string };
-        return NextResponse.json({ transcript: (fd.text ?? "").trim() });
+        return NextResponse.json({ text: (fd.text ?? "").trim() });
       }
     }
 
@@ -147,5 +147,5 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const transcript = (data.text ?? "").trim();
 
   log.info("transcription complete", { model, chars: transcript.length, empty: transcript.length === 0 });
-  return NextResponse.json({ transcript });
+  return NextResponse.json({ text: transcript });
 }

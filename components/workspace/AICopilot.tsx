@@ -122,9 +122,9 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
   const [error, setError]               = useState<string | null>(null);
 
   // ── Voice state machine ───────────────────────────────────────────────────
-  // idle → requesting → recording → transcribing → idle
-  //                  ↘ error (any stage)
-  type MicState = "idle" | "requesting" | "recording" | "transcribing" | "error";
+  // idle → requesting_permission → recording → transcribing → idle
+  //                             ↘ error (any stage)
+  type MicState = "idle" | "requesting_permission" | "recording" | "transcribing" | "error";
   const [micState,    setMicState]    = useState<MicState>("idle");
   const [micError,    setMicError]    = useState<string | null>(null);
   const [interimText, setInterimText] = useState("");      // interim shown in banner
@@ -470,7 +470,7 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
   // 4. Auto-send if document loaded, otherwise put in input box
 
   const startRecording = useCallback(() => {
-    setMicState("requesting");
+    setMicState("requesting_permission");
     setMicError(null);
     setInterimText("");
 
@@ -545,12 +545,12 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
             const res = await fetch("/api/transcribe", { method: "POST", body: fd });
             dev("transcribe response status:", res.status);
 
-            // 503 = OPENAI_API_KEY not configured → inform user and fall back to Web Speech API
+            // 503 = OPENAI_API_KEY not configured → show error, fall back to Web Speech
             if (res.status === 503) {
               setMicState("idle");
               setInterimText("");
-              setMicError("Transcription is not configured. Add OPENAI_API_KEY to Vercel and redeploy. Falling back to browser voice…");
-              setTimeout(() => setMicError(null), 5_000);
+              setMicError("Transcription is not configured. Add OPENAI_API_KEY to Vercel and redeploy.");
+              setTimeout(() => setMicError(null), 6_000);
               startWebSpeech();
               return;
             }
@@ -560,10 +560,10 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
               throw new Error(body.error ?? `Transcription failed (${res.status})`);
             }
 
-            const data = await res.json() as { transcript?: string; error?: string };
+            const data = await res.json() as { text?: string; error?: string };
             if (data.error) throw new Error(data.error);
 
-            const transcript = (data.transcript ?? "").trim();
+            const transcript = (data.text ?? "").trim();
             dev("transcript length:", transcript.length, transcript ? `"${transcript.slice(0,40)}…"` : "(empty)");
             setInterimText("");
 
@@ -580,12 +580,10 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
               // Auto-send; AI will speak the reply back (fromVoice=true)
               sendMessageRef.current(transcript, true);
             } else {
-              // No document loaded — put transcript in the input box and show
-              // a friendly hint so the user knows what to do next
+              // No document loaded — put transcript in input, show friendly hint
               setInput(transcript);
               wasVoiceInput.current = true;
-              setMicError("Got it! Upload a document first so I can answer in context.");
-              // Treat as info, not hard error — clear automatically after 4 s
+              setMicError("Upload a document first so I can answer in context.");
               setTimeout(() => setMicError(null), 4_000);
             }
           } catch (err) {
@@ -625,9 +623,9 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
         }
         setMicState("error");
         if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-          setMicError("Microphone blocked. Click the 🔒 icon in the address bar → Site settings → Microphone → Allow → refresh.");
+          setMicError("Microphone blocked. Allow microphone permission in your browser settings, refresh, and try again.");
         } else if (err.name === "NotFoundError") {
-          setMicError("No microphone found. Plug one in and try again.");
+          setMicError("No microphone found. Connect a microphone and try again.");
         } else if (err.name === "NotSupportedError") {
           setMicError("Voice input is not supported in this browser.");
         } else {
@@ -664,16 +662,18 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
         startRecording();
       } else {
         // MediaRecorder unavailable — go straight to Web Speech API
-        setMicState("requesting");
+        setMicState("requesting_permission");
         navigator.mediaDevices
           .getUserMedia({ audio: true })
           .then((stream) => { stream.getTracks().forEach((t) => t.stop()); startWebSpeech(); })
           .catch((err: Error) => {
             setMicState("error");
-            if (err.name === "NotAllowedError") {
-              setMicError("Microphone blocked. Click the 🔒 in the address bar → Site settings → Microphone → Allow → refresh.");
+            if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+              setMicError("Microphone blocked. Allow microphone permission in your browser settings, refresh, and try again.");
             } else if (err.name === "NotFoundError") {
-              setMicError("No microphone found. Plug one in and try again.");
+              setMicError("No microphone found. Connect a microphone and try again.");
+            } else if (err.name === "NotSupportedError") {
+              setMicError("Voice input is not supported in this browser.");
             } else {
               setMicError(`Microphone error: ${err.message}`);
             }
@@ -906,14 +906,14 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
               onClick={handleMicClick}
               disabled={isStreaming || micState === "transcribing"}
               title={
-                micState === "requesting"    ? "Requesting microphone…" :
-                micState === "recording"     ? "Click to stop and send" :
-                micState === "transcribing"  ? "Transcribing…" :
-                !hasDocument                 ? "Tap to speak (upload a document to send)" :
-                                               "Tap to speak — auto-sends when done"
+                micState === "requesting_permission" ? "Requesting microphone permission…" :
+                micState === "recording"             ? "Click to stop and send" :
+                micState === "transcribing"          ? "Transcribing…" :
+                !hasDocument                         ? "Tap to speak (upload a document to send)" :
+                                                       "Tap to speak — auto-sends when done"
               }
               className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all shrink-0 disabled:cursor-not-allowed ${
-                micState === "requesting" || micState === "transcribing"
+                micState === "requesting_permission" || micState === "transcribing"
                   ? "bg-[#F5C800]/15 text-[#F5C800]"
                   : micState === "recording"
                   ? "bg-red-500 text-white"
@@ -922,7 +922,7 @@ export default function AICopilot({ document, onGenerateArtifact, onChatUpdated,
                   : "bg-white/8 hover:bg-white/15 text-slate-400 hover:text-slate-200"
               }`}
             >
-              {micState === "requesting" || micState === "transcribing"
+              {micState === "requesting_permission" || micState === "transcribing"
                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 : micState === "recording"
                 ? <Square   className="w-3 h-3" />
