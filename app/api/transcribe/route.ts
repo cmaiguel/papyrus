@@ -21,13 +21,20 @@ export const maxDuration = 30;
  *   502 { error: string }   — Whisper upstream error
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  // Accept either OPENAI_API_KEY (OpenAI) or GROQ_API_KEY (Groq — free tier).
+  // Groq's transcription API is OpenAI-compatible; only the base URL differs.
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  const GROQ_API_KEY   = process.env.GROQ_API_KEY;
+  const STT_KEY        = OPENAI_API_KEY ?? GROQ_API_KEY ?? null;
+  const STT_BASE_URL   = GROQ_API_KEY && !OPENAI_API_KEY
+    ? "https://api.groq.com/openai/v1/audio/transcriptions"
+    : "https://api.openai.com/v1/audio/transcriptions";
 
   // ── Feature gate ───────────────────────────────────────────────────────────
-  if (!OPENAI_API_KEY) {
-    log.warn("OPENAI_API_KEY not set — transcription unavailable");
+  if (!STT_KEY) {
+    log.warn("No STT API key — set OPENAI_API_KEY or GROQ_API_KEY");
     return NextResponse.json(
-      { error: "Transcription not configured on this server. Add OPENAI_API_KEY to enable." },
+      { error: "Transcription not configured. Add OPENAI_API_KEY or GROQ_API_KEY to Vercel." },
       { status: 503 }
     );
   }
@@ -74,10 +81,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
              : "webm";
 
   // ── Build Whisper request ──────────────────────────────────────────────────
-  // Use the model set via OPENAI_TRANSCRIPTION_MODEL, defaulting to
-  // gpt-4o-mini-transcribe (lower cost, faster). Falls back to whisper-1 on
-  // error so the endpoint still works on accounts that don't have the newer model.
-  const model = process.env.OPENAI_TRANSCRIPTION_MODEL ?? "gpt-4o-mini-transcribe";
+  // Groq supports: whisper-large-v3-turbo (fast, free tier)
+  // OpenAI supports: gpt-4o-mini-transcribe (default), whisper-1 (fallback)
+  const defaultModel = GROQ_API_KEY && !OPENAI_API_KEY
+    ? "whisper-large-v3-turbo"
+    : "gpt-4o-mini-transcribe";
+  const model = process.env.OPENAI_TRANSCRIPTION_MODEL ?? defaultModel;
 
   const whisperForm = new FormData();
   whisperForm.append("file", audio, `audio.${ext}`);
@@ -98,12 +107,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     model,    // which model will be attempted first
   });
 
-  // ── Call Whisper ───────────────────────────────────────────────────────────
+  // ── Call transcription API (OpenAI or Groq — same interface) ─────────────
+  log.info("calling STT", { url: STT_BASE_URL, model });
   let whisperResp: Response;
   try {
-    whisperResp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    whisperResp = await fetch(STT_BASE_URL, {
       method:  "POST",
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+      headers: { Authorization: `Bearer ${STT_KEY}` },
       body:    whisperForm,
     });
   } catch (err) {
@@ -125,9 +135,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       fallbackForm.append("response_format", "json");
       if (lang && lang.length === 2 && lang !== "au") fallbackForm.append("language", lang);
 
-      const fallback = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      const fallback = await fetch(STT_BASE_URL, {
         method:  "POST",
-        headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+        headers: { Authorization: `Bearer ${STT_KEY}` },
         body:    fallbackForm,
       }).catch(() => null);
 
